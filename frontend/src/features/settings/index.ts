@@ -1,0 +1,5 @@
+﻿export * from './pages/TeamPages'
+export * from './pages/ChatConfigPages'
+export * from './pages/WidgetAccountPages'
+export * from './pages/WidgetPages'
+export * from './pages/PersonalPages'

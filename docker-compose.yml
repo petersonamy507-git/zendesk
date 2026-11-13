@@ -1,0 +1,55 @@
+# Production-style stack. NOT run in development here (Docker was explicitly deferred); provided as configuration.
+services:
+  mysql:
+    image: mysql:8.4
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    environment:
+      MYSQL_DATABASE: helpdesk
+      MYSQL_USER: helpdesk
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+    volumes: [mysql_data:/var/lib/mysql]
+    healthcheck: { test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"], interval: 5s, retries: 20 }
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis_data:/data]
+
+  api:
+    build: { context: ./backend, dockerfile: ../infrastructure/docker/api.Dockerfile }
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: mysql+pymysql://helpdesk:${MYSQL_PASSWORD}@mysql:3306/helpdesk
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      CORS_ORIGINS: '["${PUBLIC_URL:-http://localhost}"]'
+      FRONTEND_URL: ${PUBLIC_URL:-http://localhost}
+      RUN_INPROCESS_WORKERS: "false"
+      # nginx is the only peer that may set X-Forwarded-For. Keep this to the compose network, never to client ranges.
+      TRUSTED_PROXIES: '["127.0.0.1","::1","172.30.0.0/24"]'
+    depends_on: { mysql: { condition: service_healthy }, redis: { condition: service_started } }
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    volumes: [uploads:/app/storage]
+
+  worker:
+    build: { context: ./backend, dockerfile: ../infrastructure/docker/api.Dockerfile }
+    environment:
+      DATABASE_URL: mysql+pymysql://helpdesk:${MYSQL_PASSWORD}@mysql:3306/helpdesk
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET}
+    command: celery -A app.workers.celery_app worker -B --loglevel=info
+    depends_on: [api]
+
+  web:
+    build: { context: ., dockerfile: infrastructure/docker/web.Dockerfile }
+    ports: ["80:80"]
+    depends_on: [api]
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes: { mysql_data: {}, redis_data: {}, uploads: {} }

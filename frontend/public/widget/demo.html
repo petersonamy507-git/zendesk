@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Widget demo — Example Shop</title>
+  <style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;color:#2b3640}</style>
+</head>
+<body>
+  <h1>Example Shop</h1>
+  <p>This page simulates a customer website. The chat launcher appears in the corner. Pick a workspace with <code>?ws=your-subdomain</code>.</p>
+  <script>
+    (function () {
+      var ws = new URLSearchParams(location.search).get('ws') || 'demo';
+      var s = document.createElement('script');
+      s.src = '/widget/parley-widget.js';
+      s.dataset.workspace = ws;
+      s.dataset.api = location.origin;
+      s.async = true;
+      document.body.appendChild(s);
+    })();
+  </script>
+</body>
+</html>

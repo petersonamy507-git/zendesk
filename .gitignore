@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+.env
+*.db
+*.out
+*.err
+storage/
+docs/reference/screenshots/
+frontend/public/widget/parley-widget.js
+.pytest_cache/
+screenshots/
+.dev-logs/

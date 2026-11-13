@@ -1,0 +1,17 @@
+﻿fastapi==0.118.*
+uvicorn[standard]
+sqlalchemy>=2.0,<2.1
+alembic
+pydantic>=2.8
+pydantic-settings
+pymysql
+cryptography
+argon2-cffi
+pyjwt
+python-multipart
+redis
+celery
+email-validator
+httpx
+pytest
+pytest-asyncio
