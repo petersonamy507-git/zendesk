@@ -20,7 +20,14 @@ log = logging.getLogger("app")
 async def lifespan(_: FastAPI):
     import asyncio
 
+    import anyio.to_thread
+
+    from app.services.settings import invalidation_listener
+
+    # Sync endpoints run on this threadpool; size it below the DB pool (see config.db_pool_size).
+    anyio.to_thread.current_default_thread_limiter().total_tokens = get_settings().threadpool_size
     await broker.start()
+    settings_listener = asyncio.create_task(invalidation_listener())
     sweeper = None
     if get_settings().run_inprocess_workers:
         from app.workers.sweeper import run_forever
@@ -29,6 +36,7 @@ async def lifespan(_: FastAPI):
     yield
     if sweeper:
         sweeper.cancel()
+    settings_listener.cancel()
     await broker.stop()
 
 

@@ -1,9 +1,10 @@
 """Account settings sections with defaults. Each section is one JSON document in account_settings.
 Defaults mirror the controls observed in the reference (see docs/reference/page-inventory.md)."""
 
+import time
 from copy import deepcopy
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFound
@@ -29,9 +30,16 @@ DEFAULTS: dict[str, dict] = {
 }
 
 
-def get_section(db: Session, account_id: str, section: str) -> dict:
-    if section not in DEFAULTS:
-        raise NotFound(f"Unknown settings section '{section}'")
+# Read-through cache. Hot widget paths (session start, chat start, every message) read several
+# sections per request; without the cache that's ~10 identical SELECTs per visitor request.
+# Writes invalidate this worker immediately and other workers through the event bus (see
+# `invalidation_listener`); the TTL bounds staleness if an invalidation is ever missed.
+CACHE_TTL_S = 10.0
+_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+INVALIDATE_TOPIC = "internal:settings"
+
+
+def _load(db: Session, account_id: str, section: str) -> dict:
     row = db.scalar(select(AccountSetting).where(AccountSetting.account_id == account_id, AccountSetting.section == section))
     data = deepcopy(DEFAULTS[section])
     if row:
@@ -39,9 +47,51 @@ def get_section(db: Session, account_id: str, section: str) -> dict:
     return data
 
 
+def get_section(db: Session, account_id: str, section: str) -> dict:
+    if section not in DEFAULTS:
+        raise NotFound(f"Unknown settings section '{section}'")
+    key = (account_id, section)
+    hit = _cache.get(key)
+    now = time.monotonic()
+    if hit and hit[0] > now:
+        return deepcopy(hit[1])
+    data = _load(db, account_id, section)
+    _cache[key] = (now + CACHE_TTL_S, data)
+    return deepcopy(data)
+
+
+def invalidate(account_id: str | None = None, section: str | None = None) -> None:
+    if account_id is None:
+        _cache.clear()
+    else:
+        _cache.pop((account_id, section), None)
+
+
+async def invalidation_listener() -> None:
+    """Runs in every API worker: drops cache entries other workers changed."""
+    import asyncio
+
+    from app.core.events import broker
+
+    q: asyncio.Queue = asyncio.Queue(maxsize=1000)
+    broker.subscribe(INVALIDATE_TOPIC, q)
+    try:
+        while True:
+            evt = await q.get()
+            d = evt.get("data") or {}
+            if evt.get("type") == "_overflow" or not d.get("account_id"):
+                invalidate()
+            else:
+                invalidate(d["account_id"], d.get("section"))
+    finally:
+        broker.unsubscribe(INVALIDATE_TOPIC, q)
+
+
 def put_section(db: Session, account_id: str, section: str, values: dict, *, reset: bool = False) -> tuple[dict, dict]:
     """Merge (or reset) a section. Only known keys are accepted. Returns (new_data, changes)."""
-    current = get_section(db, account_id, section)
+    if section not in DEFAULTS:
+        raise NotFound(f"Unknown settings section '{section}'")
+    current = _load(db, account_id, section)
     new = deepcopy(DEFAULTS[section]) if reset else dict(current)
     for k, v in values.items():
         if k in DEFAULTS[section]:
@@ -54,4 +104,13 @@ def put_section(db: Session, account_id: str, section: str, values: dict, *, res
     else:
         row.data = new
     db.flush()
+    invalidate(account_id, section)
+
+    @event.listens_for(db, "after_commit", once=True)
+    def _after_commit(_session) -> None:
+        from app.core.events import publish_sync
+
+        invalidate(account_id, section)  # a concurrent reader may have re-cached the pre-commit value
+        publish_sync(INVALIDATE_TOPIC, "settings.invalidate", {"account_id": account_id, "section": section})
+
     return new, changes

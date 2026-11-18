@@ -23,7 +23,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.deps import principal_from_token
 from app.core.db import SessionLocal
 from app.core.errors import AppError
-from app.core.events import broker
+from app.core.events import OVERFLOW, broker
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,12 +46,20 @@ def _authorize_topic(principal, topic: str) -> bool:
     return False
 
 
+def _load_principal(token: str):
+    with SessionLocal() as db:
+        principal = principal_from_token(db, token)
+        principal.user.display_name, principal.user.name  # noqa: B018 - load before detaching (used for typing events)
+        db.expunge_all()
+        return principal
+
+
 @router.websocket("/api/v1/ws")
 async def agent_socket(ws: WebSocket, token: str = ""):
     try:
-        with SessionLocal() as db:
-            principal = principal_from_token(db, token)
-            db.expunge_all()
+        # Blocking DB work runs in the threadpool: on the event loop it would stall every other
+        # socket of this worker while a reconnect storm (e.g. after a deploy) authenticates.
+        principal = await run_in_threadpool(_load_principal, token)
     except AppError:
         await ws.close(code=4401)
         return
@@ -67,7 +75,10 @@ async def agent_socket(ws: WebSocket, token: str = ""):
     async def pump():
         while True:
             evt = await q.get()
-            await ws.send_json(evt)
+            if evt is OVERFLOW:  # too slow to keep up: disconnect; the client reconnects and re-fetches
+                await ws.close(code=1013)
+                return
+            await ws.send_text(evt.raw)  # serialized once per event, not once per socket
 
     sender = asyncio.create_task(pump())
     try:

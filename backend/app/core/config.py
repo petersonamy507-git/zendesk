@@ -14,8 +14,14 @@ class Settings(BaseSettings):
     debug: bool = False
 
     database_url: str = "mysql+pymysql://helpdesk:helpdesk@127.0.0.1:3306/helpdesk"
-    db_pool_size: int = 10
-    db_max_overflow: int = 20
+    # Per API worker. Keep pool_size + max_overflow above threadpool_size: every sync endpoint holds a
+    # pool connection on a threadpool thread, and FastAPI also needs a free thread to run get_db's
+    # cleanup. If threads can outnumber connections, threads stuck waiting for a connection can starve
+    # the cleanups that would release one, and the worker stalls for pool_timeout at a time.
+    db_pool_size: int = 20
+    db_max_overflow: int = 30
+    db_pool_timeout: int = 10
+    threadpool_size: int = 16  # fewer threads = less GIL contention with the event loop serving sockets
     db_echo: bool = False
 
     # Empty => in-process broker/presence (single worker dev only). Set for multi-worker deployments.

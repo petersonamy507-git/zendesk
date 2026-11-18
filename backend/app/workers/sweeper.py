@@ -38,9 +38,14 @@ def sweep_once() -> int:
 
 
 async def run_forever(interval: float = 30.0) -> None:
+    from app.core.events import broker
+
     while True:
         try:
-            await run_in_threadpool(sweep_once)
+            # With several API workers only one sweeps per interval (otherwise each would end the
+            # same stale chats and publish duplicate events).
+            if await broker.try_lock("sweeper", int(interval * 0.9)):
+                await run_in_threadpool(sweep_once)
         except Exception:  # noqa: BLE001
             log.exception("sweeper failed")
         await asyncio.sleep(interval)

@@ -63,6 +63,12 @@ uvicorn app.main:app --host 127.0.0.1 --port 8643
 cd frontend
 npm run dev
 ```
+For many simultaneous chat users run several API workers. That needs Redis (`REDIS_URL=redis://127.0.0.1:6379/0` in
+`backend/.env`) so events, presence, rate limits and the sweeper are shared across workers:
+`uvicorn app.main:app --host 127.0.0.1 --port 8643 --workers 4`. Keep `THREADPOOL_SIZE` small (default 16; 8 measured better
+with several workers) and below `DB_POOL_SIZE + DB_MAX_OVERFLOW`, and make sure MySQL's `max_connections` covers
+workers × pool. See `backend/loadtest/README.md` to measure.
+
 Manual database setup instead of `setup.bat`: create a database and user in MySQL, `copy backend\.env.example backend\.env`, edit `DATABASE_URL`
 and `JWT_SECRET`. Environment variables for the web app: `UI_PORT`, `API_PORT`, `UI_HOST` (`0.0.0.0` = reachable from the network),
 `UI_ALLOWED_HOSTS` (extra host names, comma separated).

@@ -13,3 +13,4 @@ frontend/public/widget/parley-widget.js
 .pytest_cache/
 screenshots/
 .dev-logs/
+*.log

@@ -48,6 +48,7 @@ from app.core.db import engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Base  # noqa: E402
 from app.services import mailer  # noqa: E402
+from app.services import settings as settings_svc  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -73,6 +74,7 @@ def fresh_db(_schema):
         Base.metadata.drop_all(engine)
         Base.metadata.create_all(engine)
     ratelimit.reset()
+    settings_svc.invalidate()
     mailer.outbox.clear()
     yield
 
